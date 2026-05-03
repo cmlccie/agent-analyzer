@@ -157,7 +157,9 @@ fn draw(
 
     // Header: logo left, key bindings right, shared bottom border.
     // Render the border on the full area first, then work inside the inner rect.
-    let header_block = Block::default().borders(Borders::BOTTOM);
+    let header_block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(Color::Rgb(48, 54, 61)));
     let header_inner = header_block.inner(outer[0]);
     f.render_widget(header_block, outer[0]);
 
@@ -170,7 +172,7 @@ fn draw(
     f.render_widget(Paragraph::new(logo), header_cols[0]);
 
     // Offset keys by 1 blank line so they sit in the middle of the banner height.
-    let key_style = Style::default().fg(Color::DarkGray);
+    let key_style = Style::default().fg(Color::Rgb(139, 148, 158)); // GitHub muted #8b949e
     let keys: Vec<Line> = std::iter::once(Line::from(""))
         .chain(
             ascii::KEYS_LINES

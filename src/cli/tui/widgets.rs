@@ -24,9 +24,9 @@ impl ListPane {
 
     pub fn render(&mut self, f: &mut Frame, area: Rect, targets: &[Target], focused: bool) {
         let border_style = if focused {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(Color::Rgb(88, 166, 255)) // GitHub blue #58a6ff
         } else {
-            Style::default()
+            Style::default().fg(Color::Rgb(48, 54, 61)) // GitHub border #30363d
         };
 
         let items: Vec<ListItem> = targets
@@ -52,11 +52,13 @@ impl ListPane {
                     .borders(Borders::ALL)
                     .border_style(border_style),
             )
-            .highlight_style(
+            .highlight_style(if focused {
                 Style::default()
                     .add_modifier(Modifier::BOLD)
-                    .fg(Color::White),
-            );
+                    .fg(Color::Rgb(88, 166, 255)) // GitHub blue #58a6ff
+            } else {
+                Style::default()
+            });
 
         f.render_stateful_widget(list, area, &mut self.state);
     }
@@ -90,7 +92,10 @@ impl ListPane {
 }
 
 pub fn render_detail(f: &mut Frame, area: Rect, target: Option<&Target>) {
-    let block = Block::default().title("Detail").borders(Borders::ALL);
+    let block = Block::default()
+        .title("Detail")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(48, 54, 61)));
 
     let text: Vec<Line> = match target {
         None => vec![Line::from("Select a target to view details.")],
@@ -133,7 +138,7 @@ pub fn render_detail(f: &mut Frame, area: Rect, target: Option<&Target>) {
                     lines.push(Line::from(""));
                     lines.push(Line::from(vec![
                         Span::raw("Error: "),
-                        Span::styled(error.clone(), Style::default().fg(Color::Red)),
+                        Span::styled(error.clone(), Style::default().fg(Color::Rgb(248, 81, 73))), // GitHub red #f85149
                     ]));
                 }
                 Status::Unknown => {}
@@ -172,7 +177,10 @@ pub fn render_websites_bar(f: &mut Frame, area: Rect, targets: &[Target]) {
         })
         .collect();
 
-    let block = Block::default().title("Websites").borders(Borders::ALL);
+    let block = Block::default()
+        .title("Websites")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(48, 54, 61)));
     let para = Paragraph::new(Line::from(spans)).block(block);
     f.render_widget(para, area);
 }
@@ -191,8 +199,8 @@ pub fn three_column_left(area: Rect) -> [Rect; 3] {
 
 fn status_icon(status: &Status) -> (&'static str, Color) {
     match status {
-        Status::Ok { .. } => ("✓", Color::Green),
-        Status::Failed { .. } => ("✗", Color::Red),
-        Status::Unknown => ("?", Color::DarkGray),
+        Status::Ok { .. } => ("✓", Color::Rgb(63, 185, 80)), // GitHub green #3fb950
+        Status::Failed { .. } => ("✗", Color::Rgb(248, 81, 73)), // GitHub red #f85149
+        Status::Unknown => ("?", Color::Rgb(139, 148, 158)), // GitHub muted #8b949e
     }
 }
