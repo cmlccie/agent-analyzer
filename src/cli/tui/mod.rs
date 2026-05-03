@@ -149,22 +149,36 @@ fn draw(
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7), // header + keys
+            Constraint::Length(7), // 6 banner lines + bottom border
             Constraint::Min(0),    // main body
             Constraint::Length(3), // websites bar
         ])
         .split(size);
 
-    // Header
-    let header_text = vec![
-        Line::from(ascii::BANNER),
-        Line::from(ratatui::text::Span::styled(
-            ascii::KEYS_HELP,
-            Style::default().fg(Color::DarkGray),
-        )),
-    ];
-    let header = Paragraph::new(header_text).block(Block::default().borders(Borders::BOTTOM));
-    f.render_widget(header, outer[0]);
+    // Header: logo left, key bindings right, shared bottom border.
+    // Render the border on the full area first, then work inside the inner rect.
+    let header_block = Block::default().borders(Borders::BOTTOM);
+    let header_inner = header_block.inner(outer[0]);
+    f.render_widget(header_block, outer[0]);
+
+    let header_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(22)])
+        .split(header_inner);
+
+    let logo: Vec<Line> = ascii::BANNER_LINES.iter().map(|&l| Line::from(l)).collect();
+    f.render_widget(Paragraph::new(logo), header_cols[0]);
+
+    // Offset keys by 1 blank line so they sit in the middle of the banner height.
+    let key_style = Style::default().fg(Color::DarkGray);
+    let keys: Vec<Line> = std::iter::once(Line::from(""))
+        .chain(
+            ascii::KEYS_LINES
+                .iter()
+                .map(|&l| Line::from(ratatui::text::Span::styled(l, key_style))),
+        )
+        .collect();
+    f.render_widget(Paragraph::new(keys), header_cols[1]);
 
     // Body split: left panes | detail pane
     let body = Layout::default()
