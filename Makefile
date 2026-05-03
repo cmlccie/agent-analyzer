@@ -1,4 +1,6 @@
-.PHONY: fmt lint test build release check clean mock status
+.PHONY: all fmt lint test build release check clean mock status
+
+all: fmt lint test build
 
 fmt:
 	cargo fmt
