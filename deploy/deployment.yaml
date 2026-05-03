@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-analyzer
+  namespace: default
+  labels:
+    app: agent-analyzer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-analyzer
+  template:
+    metadata:
+      labels:
+        app: agent-analyzer
+    spec:
+      serviceAccountName: agent-analyzer
+      containers:
+        - name: agent-analyzer
+          image: ghcr.io/your-org/agent-analyzer:latest
+          args: ["serve", "--config", "/etc/agent-analyzer/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/agent-analyzer
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: agent-analyzer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-analyzer
+  namespace: default
+spec:
+  selector:
+    app: agent-analyzer
+  ports:
+    - port: 8000
+      targetPort: 8000

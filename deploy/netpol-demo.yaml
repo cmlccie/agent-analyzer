@@ -1,0 +1,60 @@
+# CiliumNetworkPolicy demo: apply this to watch green checkmarks flip to red X's
+# in the agent-analyzer TUI. It allows agent-analyzer egress only to Services
+# matching app=vllm, blocking all other model/agent/tool endpoints.
+#
+# Usage:
+#   kubectl apply -f deploy/netpol-demo.yaml
+#   # observe TUI: non-vllm targets flip to ✗ within one probe interval
+#   kubectl delete -f deploy/netpol-demo.yaml
+#   # observe TUI: targets recover on next probe pass
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: agent-analyzer-demo
+  namespace: default
+spec:
+  description: "Demo egress policy for agent-analyzer: blocks non-vllm AI endpoints"
+  endpointSelector:
+    matchLabels:
+      app: agent-analyzer
+  egress:
+    # Allow DNS resolution (required for service discovery and HTTP clients).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+
+    # Allow egress to vllm model endpoints only.
+    # Other model/agent/tool services are implicitly blocked, causing their
+    # probe status to flip to Failed in the TUI.
+    - toEndpoints:
+        - matchLabels:
+            app: vllm
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+
+    # Allow HTTPS to external websites so website probes stay green,
+    # making the contrast with blocked internal services more visible.
+    - toFQDNs:
+        - matchPattern: "*.anthropic.com"
+        - matchPattern: "*.github.com"
+        - matchPattern: "*.openai.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # Allow access to the Kubernetes API server (needed by kube-rs discovery).
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP

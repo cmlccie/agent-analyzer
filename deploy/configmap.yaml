@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-analyzer
+  namespace: default
+data:
+  config.yaml: |
+    general:
+      discovery_interval_secs: 30
+      probe_interval_secs: 10
+      http_timeout_secs: 5
+
+    kubernetes:
+      enabled: true
+      namespaces: []   # empty = all accessible namespaces
+      label_selectors:
+        models: "app=vllm"
+        agents: "app=a2a-agent"
+        tools: "app in (mcp-fs, mcp-github)"
+
+    manual:
+      websites:
+        - name: anthropic.com
+          url: https://anthropic.com
+        - name: github.com
+          url: https://github.com
+      models: []
+      agents: []
+      tools: []
