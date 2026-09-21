@@ -1,24 +1,35 @@
 # Stage 1 — compile a fully-static binary using the Alpine (musl) Rust toolchain.
-# docker/build-push-action with platforms: linux/amd64,linux/arm64 spawns two
-# independent native builders (or QEMU-emulated), so there is no cross-compilation
-# complexity; each builder targets its own musl triple automatically.
-FROM rust:1-alpine AS builder
+# The CI workflow fans linux/amd64 and linux/arm64 out to native runners
+# (ubuntu-24.04 and ubuntu-24.04-arm), so neither arch is emulated and each
+# builder targets its own musl triple automatically.
+#
+# The Rust version is pinned deliberately: a floating `rust:1-alpine` tag moves
+# on every Rust release, changing the base layer and invalidating the entire
+# dependency cache on both arches at an unpredictable moment. Bump this on
+# purpose, not by surprise.
+#
+# DO NOT add BuildKit `--mount=type=cache` for ~/.cargo or target/ here.
+# Cache mounts are not exported by the gha/registry/local cache backends, so in
+# CI (fresh builder per job) they would cache nothing. The layer cache below is
+# what actually makes this fast.
+FROM rust:1.98-alpine AS builder
 
 RUN apk add --no-cache musl-dev
 
 WORKDIR /build
 
-# Pre-compile all dependencies so rebuilds triggered by src/ changes are fast.
+# Pre-compile all dependencies in their own layer, keyed only on the manifests,
+# so that changes under src/ do not trigger a dependency rebuild.
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && \
     echo 'pub mod core { pub mod errors { pub type Error = Box<dyn std::error::Error + Send + Sync>; pub type Result<T> = std::result::Result<T, Error>; } }' > src/lib.rs && \
     echo 'fn main() {}' > src/main.rs && \
-    cargo build --release || true && \
+    cargo build --release --locked && \
     rm -rf src
 
 COPY . .
 # Touch the entry points so Cargo sees them as newer than the cached stubs.
-RUN touch src/lib.rs src/main.rs && cargo build --release
+RUN touch src/lib.rs src/main.rs && cargo build --release --locked
 
 # Stage 2 — distroless runtime: no shell, no package manager, non-root by default.
 FROM gcr.io/distroless/static-debian12:nonroot

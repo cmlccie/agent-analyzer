@@ -1,0 +1,28 @@
+# Build artifacts. The local target/ dir is multi-GB, and because `COPY . .`
+# lands on /build, it would also overwrite the prewarmed /build/target inside
+# the builder stage with host (macOS/debug) artifacts.
+target/
+**/*.rs.bk
+**/mutants.out*/
+
+# VCS, CI, and tooling metadata.
+.git/
+.gitignore
+.github/
+.claude/
+
+# Not needed to compile. Excluding these keeps docs-only and deploy-only
+# commits from invalidating the final `COPY . .` layer.
+docs/
+deploy/
+Makefile
+*.md
+
+# Integration tests are not built by `cargo build --release`.
+# (Remove this line if you ever run `cargo test` inside the image.)
+tests/
+
+# Container build definitions themselves.
+Containerfile
+.dockerignore
+.containerignore
