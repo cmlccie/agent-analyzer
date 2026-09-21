@@ -18,7 +18,7 @@ spec:
       serviceAccountName: agent-analyzer
       containers:
         - name: agent-analyzer
-          image: ghcr.io/your-org/agent-analyzer:latest
+          image: ghcr.io/your-org/agent-analyzer:main
           args: ["serve", "--config", "/etc/agent-analyzer/config.yaml"]
           ports:
             - name: http

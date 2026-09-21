@@ -39,4 +39,15 @@ COPY --from=builder /build/target/release/agent-analyzer /opt/agent-analyzer
 WORKDIR /opt
 EXPOSE 8000
 
-CMD ["/opt/agent-analyzer", "serve", "--config", "/etc/agent-analyzer/config.yaml"]
+# Split deliberately: the binary is the ENTRYPOINT and only its arguments are the CMD.
+#
+# With the whole launch line in CMD and no ENTRYPOINT, any caller that overrides arguments loses
+# the executable too, because Kubernetes `args` and `docker run <image> <args>` REPLACE CMD rather
+# than extending it. `args: ["serve", "--config", ...]` then leaves argv as ["serve", ...] with
+# nothing to exec, which surfaces as RunContainerError -> CrashLoopBackOff and looks nothing like
+# a bad argument. deploy/deployment.yaml sets exactly those args, so it was affected.
+#
+# Split this way, `args`-only callers work, `docker run <image>` is unchanged, and
+# `docker run <image> tui` reaches the other sub-commands.
+ENTRYPOINT ["/opt/agent-analyzer"]
+CMD ["serve", "--config", "/etc/agent-analyzer/config.yaml"]
