@@ -1,4 +1,4 @@
-//! A2A agent probe — fetches the agent card at `/.well-known/agent.json`.
+//! A2A agent probe — fetches the agent card at `<base>/.well-known/agent-card.json`.
 //!
 //! Implements a thin HTTP layer directly against the A2A spec (no external
 //! A2A library dependency; `fasa2a` does not exist on crates.io).
@@ -52,9 +52,19 @@ impl Prober for A2aProber {
     }
 }
 
-fn agent_card_url(base: &url::Url) -> String {
+/// Resolve the agent card URL relative to the target's base URL.
+///
+/// The well-known suffix is appended to the base path rather than replacing it, because an A2A
+/// app is commonly mounted under a prefix: a fasta2a server mounted at `/a2a` serves its card at
+/// `/a2a/.well-known/agent-card.json`, and overwriting the whole path requests a route that does
+/// not exist there. A base of `/` still resolves to the spec's root location.
+///
+/// `agent-card.json` is the current A2A spec filename and what fasta2a serves natively; servers
+/// that also alias the older `agent.json` are reached by the same request.
+pub(crate) fn agent_card_url(base: &url::Url) -> String {
     let mut u = base.clone();
-    u.set_path("/.well-known/agent.json");
+    let path = u.path().trim_end_matches('/').to_string();
+    u.set_path(&format!("{path}/.well-known/agent-card.json"));
     u.to_string()
 }
 
@@ -63,10 +73,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn agent_card_url_replaces_path() {
-        let base: url::Url = "http://localhost:8080/some/path".parse().unwrap();
+    fn agent_card_url_preserves_mount_prefix() {
+        let base: url::Url = "http://localhost:8080/a2a".parse().unwrap();
         let url = agent_card_url(&base);
-        assert_eq!(url, "http://localhost:8080/.well-known/agent.json");
+        assert_eq!(url, "http://localhost:8080/a2a/.well-known/agent-card.json");
+    }
+
+    #[test]
+    fn agent_card_url_handles_root_and_trailing_slash() {
+        let root: url::Url = "http://localhost:8080".parse().unwrap();
+        assert_eq!(
+            agent_card_url(&root),
+            "http://localhost:8080/.well-known/agent-card.json"
+        );
+
+        let trailing: url::Url = "http://localhost:8080/a2a/".parse().unwrap();
+        assert_eq!(
+            agent_card_url(&trailing),
+            "http://localhost:8080/a2a/.well-known/agent-card.json"
+        );
     }
 
     #[test]

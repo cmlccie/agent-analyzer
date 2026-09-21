@@ -1,7 +1,12 @@
 //! Kubernetes Service discovery.
 //!
 //! Watches Services matching the configured label selectors and maps them to
-//! Targets using per-kind conventions (scheme=http, first port, default path).
+//! Targets using per-kind conventions (scheme=http, first port, base path).
+//!
+//! The base path is what the kind's prober starts from, not necessarily the path it requests:
+//! `ModelProber` appends `/models` to it and `A2aProber` appends `/.well-known/agent-card.json`,
+//! so those kinds get the API base (`/v1`, `/a2a`) rather than a fully-formed endpoint. Giving
+//! them an endpoint instead yields `/v1/models/models` and a card path with no A2A prefix.
 //!
 //! Note: this module requires a live Kubernetes API server. It will fail to
 //! initialize when running outside a cluster without `KUBECONFIG` set.
@@ -37,13 +42,12 @@ impl Discoverer for KubernetesDiscoverer {
     async fn discover(&self, state: &AppState) -> anyhow::Result<()> {
         let selectors = &self.config.kubernetes.label_selectors;
 
+        // (kind, selector, base path). Models take the OpenAI API base; agents take the base the
+        // A2A app is mounted under, which is `/a2a` for fasta2a-derived servers; tools take the
+        // MCP endpoint itself, since `McpProber` POSTs to the target URL unchanged.
         let kinds: &[(TargetKind, Option<&str>, &str)] = &[
-            (TargetKind::Model, selectors.models.as_deref(), "/v1/models"),
-            (
-                TargetKind::Agent,
-                selectors.agents.as_deref(),
-                "/.well-known/agent.json",
-            ),
+            (TargetKind::Model, selectors.models.as_deref(), "/v1"),
+            (TargetKind::Agent, selectors.agents.as_deref(), "/a2a"),
             (TargetKind::Tool, selectors.tools.as_deref(), "/mcp"),
         ];
 
@@ -58,7 +62,7 @@ impl Discoverer for KubernetesDiscoverer {
                 .collect()
         };
 
-        for (kind, selector, default_path) in kinds {
+        for (kind, selector, base_path) in kinds {
             let Some(selector) = selector else {
                 continue;
             };
@@ -76,7 +80,7 @@ impl Discoverer for KubernetesDiscoverer {
                     .with_context(|| format!("listing services with '{selector}'"))?;
 
                 for svc in services {
-                    if let Some(target) = service_to_target(&svc, *kind, default_path) {
+                    if let Some(target) = service_to_target(&svc, *kind, base_path) {
                         state.upsert(target);
                     }
                 }
@@ -87,7 +91,7 @@ impl Discoverer for KubernetesDiscoverer {
     }
 }
 
-fn service_to_target(svc: &Service, kind: TargetKind, default_path: &str) -> Option<Target> {
+fn service_to_target(svc: &Service, kind: TargetKind, base_path: &str) -> Option<Target> {
     let meta = svc.metadata.clone();
     let name = meta.name?;
     let namespace = meta.namespace.unwrap_or_else(|| "default".to_string());
@@ -99,7 +103,7 @@ fn service_to_target(svc: &Service, kind: TargetKind, default_path: &str) -> Opt
         .and_then(|ports| ports.first())
         .map(|p| p.port)?;
 
-    let url_str = format!("http://{name}.{namespace}.svc:{port}{default_path}");
+    let url_str = format!("http://{name}.{namespace}.svc:{port}{base_path}");
     let url: Url = url_str.parse().ok()?;
 
     let id = format!("k8s-{namespace}-{name}");
@@ -146,9 +150,9 @@ mod tests {
     #[test]
     fn service_to_target_model() {
         let svc = mock_service("vllm", "default", 8000);
-        let t = service_to_target(&svc, TargetKind::Model, "/v1/models").unwrap();
+        let t = service_to_target(&svc, TargetKind::Model, "/v1").unwrap();
         assert_eq!(t.name, "vllm");
-        assert!(t.url.to_string().contains("/v1/models"));
+        assert_eq!(t.url.to_string(), "http://vllm.default.svc:8000/v1");
         assert!(matches!(t.source, Source::Discovered { .. }));
     }
 
@@ -156,6 +160,36 @@ mod tests {
     fn service_without_ports_returns_none() {
         let mut svc = mock_service("empty", "default", 0);
         svc.spec.as_mut().unwrap().ports = None;
-        assert!(service_to_target(&svc, TargetKind::Model, "/v1/models").is_none());
+        assert!(service_to_target(&svc, TargetKind::Model, "/v1").is_none());
+    }
+
+    // A discovered target's URL is a base the prober extends, so the assertion that matters is
+    // what the prober ends up requesting. Asserting only on the discovered URL is what let
+    // `/v1/models` + an appended `/models` pass unnoticed.
+    //
+    // The lab's Services all publish port 80, which `url` normalizes out of an http:// URL as the
+    // scheme default — hence no `:80` in the expected strings.
+    #[test]
+    fn discovered_urls_compose_into_valid_probe_urls() {
+        let svc = mock_service("qwen3-coder-30b-sglang", "models", 80);
+        let model = service_to_target(&svc, TargetKind::Model, "/v1").unwrap();
+        assert_eq!(
+            crate::core::probe::model::models_url(&model.url),
+            "http://qwen3-coder-30b-sglang.models.svc/v1/models"
+        );
+
+        let svc = mock_service("weather-agent", "agents", 80);
+        let agent = service_to_target(&svc, TargetKind::Agent, "/a2a").unwrap();
+        assert_eq!(
+            crate::core::probe::a2a::agent_card_url(&agent.url),
+            "http://weather-agent.agents.svc/a2a/.well-known/agent-card.json"
+        );
+
+        let svc = mock_service("weather-mcp-server", "tools", 80);
+        let tool = service_to_target(&svc, TargetKind::Tool, "/mcp").unwrap();
+        assert_eq!(
+            tool.url.to_string(),
+            "http://weather-mcp-server.tools.svc/mcp"
+        );
     }
 }

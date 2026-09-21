@@ -39,7 +39,9 @@ impl Prober for ModelProber {
     }
 }
 
-fn models_url(base: &url::Url) -> String {
+/// Resolve the `/models` URL relative to the target's base URL, which is the OpenAI API base
+/// (`.../v1`) — not an endpoint. A base that already names an endpoint yields `/v1/models/models`.
+pub(crate) fn models_url(base: &url::Url) -> String {
     let mut u = base.clone();
     let path = u.path().trim_end_matches('/').to_string();
     u.set_path(&format!("{path}/models"));
