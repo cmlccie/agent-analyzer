@@ -31,9 +31,17 @@ fn print_text(targets: &[Target]) {
         if section.is_empty() {
             continue;
         }
-        println!("\n{kind}s:");
+        let heading = match kind {
+            TargetKind::Website => "external hosts".to_string(),
+            other => format!("{other}s"),
+        };
+        println!("\n{heading}:");
         for t in section {
-            let icon = if t.status.is_ok() { "✓" } else { "✗" };
+            let icon = match t.status {
+                Status::Ok { .. } => "✓",
+                Status::Failed { .. } => "✗",
+                Status::Unknown => "?",
+            };
             let source = t.source.to_string();
             let checked = t
                 .status
@@ -41,8 +49,8 @@ fn print_text(targets: &[Target]) {
                 .map(|ts| ts.format("%H:%M:%S UTC").to_string())
                 .unwrap_or_else(|| "never".to_string());
             println!("  {icon}  {:<20} ({source})  [{checked}]", t.name);
-            if let Status::Failed { error, .. } = &t.status {
-                println!("     └─ {error}");
+            if let Status::Failed { kind, error, .. } = &t.status {
+                println!("     └─ {}: {error}", kind.label());
             }
         }
     }

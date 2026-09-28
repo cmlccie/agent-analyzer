@@ -34,6 +34,8 @@ mod tests {
             source: Source::Manual,
             status: Status::Unknown,
             metadata: Default::default(),
+            since: None,
+            history: Vec::new(),
         };
         let resp = StateResponse { targets: vec![t] };
         let json = serde_json::to_string(&resp).unwrap();

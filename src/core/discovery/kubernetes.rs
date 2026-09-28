@@ -13,7 +13,6 @@
 
 use crate::core::config::Config;
 use crate::core::discovery::Discoverer;
-use crate::core::state::AppState;
 use crate::core::target::{Source, Target, TargetKind};
 use anyhow::Context;
 use k8s_openapi::api::core::v1::Service;
@@ -39,7 +38,7 @@ impl KubernetesDiscoverer {
 }
 
 impl Discoverer for KubernetesDiscoverer {
-    async fn discover(&self, state: &AppState) -> anyhow::Result<()> {
+    async fn discover(&self) -> anyhow::Result<Vec<Target>> {
         let selectors = &self.config.kubernetes.label_selectors;
 
         // (kind, selector, base path). Models take the OpenAI API base; agents take the base the
@@ -62,6 +61,7 @@ impl Discoverer for KubernetesDiscoverer {
                 .collect()
         };
 
+        let mut targets = Vec::new();
         for (kind, selector, base_path) in kinds {
             let Some(selector) = selector else {
                 continue;
@@ -79,15 +79,15 @@ impl Discoverer for KubernetesDiscoverer {
                     .await
                     .with_context(|| format!("listing services with '{selector}'"))?;
 
-                for svc in services {
-                    if let Some(target) = service_to_target(&svc, *kind, base_path) {
-                        state.upsert_discovered(target);
-                    }
-                }
+                targets.extend(
+                    services
+                        .iter()
+                        .filter_map(|svc| service_to_target(svc, *kind, base_path)),
+                );
             }
         }
 
-        Ok(())
+        Ok(targets)
     }
 }
 

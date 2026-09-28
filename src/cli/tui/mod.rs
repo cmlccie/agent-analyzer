@@ -19,7 +19,7 @@ use ratatui::{
 };
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use widgets::ListPane;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,17 +91,19 @@ where
     // Indexed by `Pane`.
     let mut panes = [
         ListPane::new("Models", TargetKind::Model),
-        ListPane::new("Agents", TargetKind::Agent),
+        ListPane::new("Agents (A2A)", TargetKind::Agent),
         ListPane::new("Tools (MCP)", TargetKind::Tool),
-        ListPane::new("Websites", TargetKind::Website),
+        ListPane::new("External Hosts", TargetKind::Website),
     ];
     let mut focused = Pane::Models;
+    let mut refreshed_at: Option<Instant> = None;
 
     loop {
         let ts = targets.lock().unwrap().clone();
 
         terminal.draw(|f| {
-            draw(f, &ts, &mut panes, focused);
+            let refreshing = refreshed_at.is_some_and(|t| t.elapsed() < REFRESH_FLASH);
+            draw(f, &ts, &mut panes, focused, refreshing);
         })?;
 
         if event::poll(Duration::from_millis(200))?
@@ -110,6 +112,17 @@ where
             match (key.code, key.modifiers) {
                 (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                     break;
+                }
+                (KeyCode::Char('r'), _) => {
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        let client = ApiClient::new(client.base_url().clone())?;
+                        handle.spawn(async move {
+                            if let Err(e) = client.refresh().await {
+                                tracing::warn!("refresh request failed: {e}");
+                            }
+                        });
+                        refreshed_at = Some(Instant::now());
+                    }
                 }
                 (KeyCode::Tab, _) => focused = focused.next(),
                 (KeyCode::BackTab, _) => focused = focused.prev(),
@@ -125,7 +138,16 @@ where
     Ok(())
 }
 
-fn draw(f: &mut Frame, targets: &[Target], panes: &mut [ListPane; 4], focused: Pane) {
+/// How long the header acknowledges an `r` press.
+const REFRESH_FLASH: Duration = Duration::from_secs(2);
+
+fn draw(
+    f: &mut Frame,
+    targets: &[Target],
+    panes: &mut [ListPane; 4],
+    focused: Pane,
+    refreshing: bool,
+) {
     // Header | inventory | detail. The inventory and detail split the body 8:5 (consecutive
     // Fibonacci numbers, ≈ the golden ratio) so the inventory panes carry the most weight.
     let [header, inventory, detail] = Layout::vertical([
@@ -158,6 +180,10 @@ fn draw(f: &mut Frame, targets: &[Target], panes: &mut [ListPane; 4], focused: P
             ascii::KEYS_LINES
                 .iter()
                 .map(|&l| Line::styled(l, Style::default().fg(widgets::LABEL))),
+        )
+        .chain(
+            refreshing
+                .then(|| Line::styled("  ↻ refreshing…", Style::default().fg(widgets::ACCENT))),
         )
         .collect();
     f.render_widget(Paragraph::new(keys), keys_area);

@@ -1,12 +1,14 @@
 use crate::core::target::{Status, Target, TargetKind};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use tokio::sync::Notify;
 
 /// Shared, mutable application state. Owned by the `serve` process and read
 /// by HTTP handlers, discovery tasks, and probe tasks.
 #[derive(Debug, Default, Clone)]
 pub struct AppState {
     inner: Arc<RwLock<StateInner>>,
+    refresh: Arc<Notify>,
 }
 
 #[derive(Debug, Default)]
@@ -28,20 +30,32 @@ impl AppState {
             .insert(target.id.clone(), target);
     }
 
-    /// Insert a freshly discovered target, keeping the status of any target already known by
-    /// that id. Discovery re-runs periodically and always produces `Status::Unknown`; letting it
-    /// overwrite would flip a probed target back to `?` and drop its last error.
-    pub fn upsert_discovered(&self, mut target: Target) {
+    /// Replace the target set with the result of a full discovery pass.
+    ///
+    /// Targets that were not discovered again are dropped, so deleted Services and removed config
+    /// entries disappear. Targets that were keep their probe status, `since` and history:
+    /// discovery always yields `Status::Unknown`, and letting that overwrite would flip a probed
+    /// target back to `?` and lose its last error.
+    pub fn reconcile(&self, discovered: Vec<Target>) {
         let mut inner = self.inner.write().expect("state lock poisoned");
-        if let Some(existing) = inner.targets.get(&target.id) {
-            target.status = existing.status.clone();
-        }
-        inner.targets.insert(target.id.clone(), target);
+        let mut previous = std::mem::take(&mut inner.targets);
+        inner.targets = discovered
+            .into_iter()
+            .map(|mut t| {
+                if let Some(old) = previous.remove(&t.id) {
+                    t.status = old.status;
+                    t.since = old.since;
+                    t.history = old.history;
+                }
+                (t.id.clone(), t)
+            })
+            .collect();
     }
 
-    /// Record a probe result. Only the status is touched, so metadata refreshed by a concurrent
-    /// discovery pass is kept, and a target removed while its probe was in flight stays removed.
-    pub fn set_status(&self, id: &str, status: Status) {
+    /// Record a probe result for a target. Only probe-owned fields change, so metadata refreshed
+    /// by a concurrent discovery pass is kept, and a target removed while its probe was in flight
+    /// stays removed.
+    pub fn record(&self, id: &str, status: Status) {
         if let Some(t) = self
             .inner
             .write()
@@ -49,8 +63,19 @@ impl AppState {
             .targets
             .get_mut(id)
         {
-            t.status = status;
+            t.record(status);
         }
+    }
+
+    /// Ask the background loop to run discovery and a probe pass now. A request made while a
+    /// pass is running is kept and served when it finishes.
+    pub fn request_refresh(&self) {
+        self.refresh.notify_one();
+    }
+
+    /// Wait for the next `request_refresh`. Intended for a single consumer.
+    pub async fn refresh_requested(&self) {
+        self.refresh.notified().await;
     }
 
     /// Remove a target by id.
@@ -120,6 +145,8 @@ mod tests {
             source: Source::Manual,
             status: Status::Unknown,
             metadata: Default::default(),
+            since: None,
+            history: Vec::new(),
         }
     }
 
@@ -162,33 +189,49 @@ mod tests {
 
     fn failed(error: &str) -> Status {
         Status::Failed {
+            kind: Default::default(),
             error: error.into(),
             checked_at: Utc::now(),
         }
     }
 
     #[test]
-    fn rediscovery_keeps_probe_status() {
+    fn reconcile_keeps_probe_state_and_prunes_missing() {
         let state = AppState::new();
-        state.upsert_discovered(make_target("m1", TargetKind::Model));
-        state.set_status("m1", failed("connection refused"));
+        state.reconcile(vec![
+            make_target("m1", TargetKind::Model),
+            make_target("gone", TargetKind::Model),
+        ]);
+        state.record("m1", failed("connection refused"));
 
         let mut rediscovered = make_target("m1", TargetKind::Model);
         rediscovered.metadata.insert("app".into(), "vllm".into());
-        state.upsert_discovered(rediscovered);
+        state.reconcile(vec![rediscovered]);
 
         let got = state.get("m1").unwrap();
         assert!(
             matches!(got.status, Status::Failed { ref error, .. } if error == "connection refused")
         );
+        assert_eq!(got.history, [false]);
+        assert!(got.since.is_some());
         assert_eq!(got.metadata.get("app").map(String::as_str), Some("vllm"));
+        assert!(state.get("gone").is_none());
     }
 
     #[test]
-    fn set_status_ignores_removed_target() {
+    fn record_ignores_removed_target() {
         let state = AppState::new();
-        state.set_status("gone", failed("timeout"));
+        state.record("gone", failed("timeout"));
         assert!(state.get("gone").is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_request_is_not_lost_without_a_waiter() {
+        let state = AppState::new();
+        state.request_refresh();
+        tokio::time::timeout(std::time::Duration::from_secs(1), state.refresh_requested())
+            .await
+            .expect("stored refresh request should complete immediately");
     }
 
     #[test]

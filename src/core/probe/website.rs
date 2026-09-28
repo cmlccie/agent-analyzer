@@ -1,4 +1,4 @@
-use crate::core::probe::{Prober, failed_status, request_failed};
+use crate::core::probe::{Prober, http_failed, request_failed};
 use crate::core::target::{Status, Target};
 use chrono::Utc;
 use reqwest::Client;
@@ -25,7 +25,7 @@ impl Prober for WebsiteProber {
                         checked_at: Utc::now(),
                     }
                 } else {
-                    failed_status(format!("HTTP {status_code}"))
+                    http_failed(resp.status())
                 }
             }
             Err(e) => request_failed(e),

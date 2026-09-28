@@ -18,6 +18,12 @@ pub async fn healthz() -> impl IntoResponse {
     StatusCode::OK
 }
 
+/// Ask the backend to run discovery and a probe pass now instead of waiting for the next tick.
+pub async fn refresh(State(state): State<AppState>) -> impl IntoResponse {
+    state.request_refresh();
+    StatusCode::ACCEPTED
+}
+
 pub async fn get_state(State(state): State<AppState>) -> impl IntoResponse {
     let targets = state.all();
     Json(StateResponse { targets })

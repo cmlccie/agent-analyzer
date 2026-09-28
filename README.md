@@ -7,10 +7,12 @@ A Kubernetes-native terminal UI for discovering and probing AI components — mo
 `agent-analyzer` runs as a lightweight backend server that:
 
 - **Discovers** AI components from Kubernetes services (by label selector) and from a static config file
-- **Probes** each target on a configurable interval using the appropriate protocol: OpenAI-compatible API, MCP JSON-RPC handshake, Agent-to-Agent (A2A), or plain HTTP
+- **Probes** each target on a configurable interval using the appropriate protocol, and inventories what it finds: served models (OpenAI-compatible `/models`), advertised skills (A2A agent card), available tools (MCP `initialize` + `tools/list` over Streamable HTTP), or plain HTTP reachability
+- **Classifies** each failure (timeout, refused, DNS, TLS, unauthorized/forbidden, HTTP error, bad response) so the effect of a network or authorization policy is visible at a glance
+- **Tracks** how long each target has been in its current state and its recent probe history; targets that disappear from Kubernetes or the config are removed
 - **Exposes** current state over a local HTTP API
 
-A TUI client polls the backend and displays live, color-coded status across four inventory panes (Models / Agents / Tools / Websites), with a detail pane showing the selected target and its last probe error.
+A TUI client polls the backend and displays live, color-coded status across four inventory panes (Models / Agents (A2A) / Tools (MCP) / External Hosts), with a detail pane showing the selected target, its last probe error or inventory, and its probe history. Press `r` to run discovery and a probe pass immediately.
 
 ## Usage
 
@@ -107,3 +109,4 @@ The server exposes a REST API on port 8000:
 | `GET /api/v1/state`        | Full state snapshot               |
 | `GET /api/v1/targets`      | List targets (filterable by kind) |
 | `GET /api/v1/targets/{id}` | Single target detail              |
+| `POST /api/v1/refresh`     | Run discovery + probing now       |

@@ -60,6 +60,18 @@ impl ApiClient {
         Ok(resp.target)
     }
 
+    /// Ask the backend to run discovery and probing now.
+    pub async fn refresh(&self) -> anyhow::Result<()> {
+        self.http
+            .post(self.url("/api/v1/refresh"))
+            .send()
+            .await
+            .context("POST /api/v1/refresh")?
+            .error_for_status()
+            .context("server returned error")?;
+        Ok(())
+    }
+
     /// Liveness check — returns `true` if the server is reachable.
     pub async fn healthz(&self) -> bool {
         let url = self.url("/api/v1/healthz");

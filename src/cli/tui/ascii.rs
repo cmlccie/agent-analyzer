@@ -11,5 +11,6 @@ pub const BANNER_LINES: &[&str] = &[
 pub const KEYS_LINES: &[&str] = &[
     "  Tab ←→   switch pane",
     "  ↑↓ j k   select",
+    "  r        refresh now",
     "  q        quit",
 ];
