@@ -1,11 +1,25 @@
-use crate::core::target::{Status, Target, TargetKind};
+use crate::core::target::{Source, Status, Target, TargetKind};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
+
+// GitHub dark palette. Text colors are picked for legibility on a pure black terminal
+// background: `TEXT` for primary content, `LABEL` for secondary text such as field names and
+// inactive pane titles, `SUBTLE` only for decoration that should recede.
+pub const TEXT: Color = Color::Rgb(230, 237, 243); // #e6edf3
+pub const LABEL: Color = Color::Rgb(173, 186, 199); // #adbac7
+pub const SUBTLE: Color = Color::Rgb(125, 133, 144); // #7d8590
+pub const BORDER: Color = Color::Rgb(72, 79, 88); // #484f58
+pub const ACCENT: Color = Color::Rgb(88, 166, 255); // #58a6ff
+const GREEN: Color = Color::Rgb(63, 185, 80); // #3fb950
+const RED: Color = Color::Rgb(248, 81, 73); // #f85149
+
+/// Terminal width at which the four inventory panes sit side by side instead of in a 2×2 grid.
+const WIDE_LAYOUT_MIN_WIDTH: u16 = 120;
 
 pub struct ListPane {
     pub title: &'static str,
@@ -22,134 +36,177 @@ impl ListPane {
         }
     }
 
-    pub fn render(&mut self, f: &mut Frame, area: Rect, targets: &[Target], focused: bool) {
-        let border_style = if focused {
-            Style::default().fg(Color::Rgb(88, 166, 255)) // GitHub blue #58a6ff
-        } else {
-            Style::default().fg(Color::Rgb(48, 54, 61)) // GitHub border #30363d
-        };
+    fn items<'a>(&self, targets: &'a [Target]) -> impl Iterator<Item = &'a Target> {
+        let kind = self.kind;
+        targets.iter().filter(move |t| t.kind == kind)
+    }
 
-        let items: Vec<ListItem> = targets
+    pub fn render(&mut self, f: &mut Frame, area: Rect, targets: &[Target], focused: bool) {
+        let items: Vec<&Target> = self.items(targets).collect();
+
+        // Keep a valid selection so the detail pane always has something to show.
+        match self.state.selected() {
+            _ if items.is_empty() => self.state.select(None),
+            Some(i) if i < items.len() => {}
+            _ => self.state.select(Some(0)),
+        }
+
+        let block = Block::default()
+            .title(pane_title(self.title, &items, focused))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if focused { ACCENT } else { BORDER }));
+
+        let list_items: Vec<ListItem> = items
             .iter()
-            .filter(|t| t.kind == self.kind)
             .map(|t| {
                 let (icon, color) = status_icon(&t.status);
-                let source_tag = match &t.source {
-                    crate::core::target::Source::Discovered { .. } => "(k8s)",
-                    crate::core::target::Source::Manual => "(cfg)",
+                let tag = match t.source {
+                    Source::Discovered { .. } => " k8s",
+                    Source::Manual => " cfg",
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(format!("{icon} "), Style::default().fg(color)),
-                    Span::raw(format!("{} {source_tag}", t.name)),
+                    Span::styled(t.name.clone(), Style::default().fg(TEXT)),
+                    Span::styled(tag, Style::default().fg(SUBTLE)),
                 ]))
             })
             .collect();
 
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .title(self.title)
-                    .borders(Borders::ALL)
-                    .border_style(border_style),
-            )
-            .highlight_style(if focused {
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .fg(Color::Rgb(88, 166, 255)) // GitHub blue #58a6ff
-            } else {
-                Style::default()
-            });
+        let highlight = if focused {
+            Style::default()
+                .fg(ACCENT)
+                .bg(Color::Rgb(22, 27, 34)) // #161b22
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().add_modifier(Modifier::BOLD)
+        };
+
+        let list = List::new(list_items)
+            .block(block)
+            .highlight_style(highlight)
+            .highlight_symbol(if focused { "▌" } else { " " });
 
         f.render_stateful_widget(list, area, &mut self.state);
     }
 
     pub fn selected_target<'a>(&self, targets: &'a [Target]) -> Option<&'a Target> {
-        let i = self.state.selected()?;
-        targets.iter().filter(|t| t.kind == self.kind).nth(i)
+        self.items(targets).nth(self.state.selected()?)
     }
 
     pub fn select_next(&mut self, targets: &[Target]) {
-        let count = targets.iter().filter(|t| t.kind == self.kind).count();
-        if count == 0 {
-            return;
+        let count = self.items(targets).count();
+        if count > 0 {
+            let i = self.state.selected().map(|i| (i + 1) % count).unwrap_or(0);
+            self.state.select(Some(i));
         }
-        let i = self.state.selected().map(|i| (i + 1) % count).unwrap_or(0);
-        self.state.select(Some(i));
     }
 
     pub fn select_prev(&mut self, targets: &[Target]) {
-        let count = targets.iter().filter(|t| t.kind == self.kind).count();
-        if count == 0 {
-            return;
+        let count = self.items(targets).count();
+        if count > 0 {
+            let i = self
+                .state
+                .selected()
+                .map(|i| i.checked_sub(1).unwrap_or(count - 1))
+                .unwrap_or(0);
+            self.state.select(Some(i));
         }
-        let i = self
-            .state
-            .selected()
-            .map(|i| i.checked_sub(1).unwrap_or(count - 1))
-            .unwrap_or(0);
-        self.state.select(Some(i));
     }
+}
+
+/// Pane title with a per-status tally, e.g. ` Agents  ✓ 2  ✗ 4 `.
+fn pane_title(title: &str, items: &[&Target], focused: bool) -> Line<'static> {
+    let title_style = if focused {
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
+    };
+
+    let count = |f: fn(&Status) -> bool| items.iter().filter(|t| f(&t.status)).count();
+    let tallies = [
+        (count(|s| matches!(s, Status::Ok { .. })), GREEN, "✓"),
+        (count(|s| matches!(s, Status::Failed { .. })), RED, "✗"),
+        (count(|s| matches!(s, Status::Unknown)), SUBTLE, "?"),
+    ];
+
+    std::iter::once(Span::styled(format!(" {title} "), title_style))
+        .chain(
+            tallies
+                .into_iter()
+                .filter(|(n, ..)| *n > 0)
+                .map(|(n, color, icon)| {
+                    Span::styled(format!(" {icon} {n} "), Style::default().fg(color))
+                }),
+        )
+        .collect()
 }
 
 pub fn render_detail(f: &mut Frame, area: Rect, target: Option<&Target>) {
     let block = Block::default()
-        .title("Detail")
+        .title(Span::styled(
+            " Detail ",
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(48, 54, 61)));
+        .border_style(Style::default().fg(BORDER));
 
     let text: Vec<Line> = match target {
-        None => vec![Line::from("Select a target to view details.")],
+        None => vec![Line::styled(
+            "Select a target to view details.",
+            Style::default().fg(LABEL),
+        )],
         Some(t) => {
             let (icon, color) = status_icon(&t.status);
             let mut lines = vec![
-                Line::from(vec![
-                    Span::raw("Name:    "),
-                    Span::styled(
-                        t.name.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::from(format!("Kind:    {}", t.kind)),
-                Line::from(format!("URL:     {}", t.url)),
-                Line::from(format!("Source:  {}", t.source)),
-                Line::from(vec![
-                    Span::raw("Status:  "),
-                    Span::styled(icon.to_string(), Style::default().fg(color)),
-                ]),
+                field(
+                    "Name",
+                    t.name.clone(),
+                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                ),
+                field("Kind", t.kind.to_string(), Style::default().fg(TEXT)),
+                field("URL", t.url.to_string(), Style::default().fg(TEXT)),
+                field("Source", t.source.to_string(), Style::default().fg(TEXT)),
+                field(
+                    "Status",
+                    format!("{icon} {}", status_label(&t.status)),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
             ];
 
             if let Some(ts) = t.status.checked_at() {
-                lines.push(Line::from(format!(
-                    "Checked: {}",
-                    ts.format("%Y-%m-%dT%H:%M:%SZ")
-                )));
+                lines.push(field(
+                    "Checked",
+                    ts.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                    Style::default().fg(TEXT),
+                ));
             }
 
             match &t.status {
                 Status::Ok { details, .. } => {
                     lines.push(Line::from(""));
-                    lines.push(Line::from("Details:"));
+                    lines.push(Line::styled("Details", Style::default().fg(LABEL)));
                     let pretty = serde_json::to_string_pretty(details).unwrap_or_default();
-                    for l in pretty.lines() {
-                        lines.push(Line::from(format!("  {l}")));
-                    }
+                    lines.extend(
+                        pretty
+                            .lines()
+                            .map(|l| Line::styled(format!("  {l}"), Style::default().fg(TEXT))),
+                    );
                 }
                 Status::Failed { error, .. } => {
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(vec![
-                        Span::raw("Error: "),
-                        Span::styled(error.clone(), Style::default().fg(Color::Rgb(248, 81, 73))), // GitHub red #f85149
-                    ]));
+                    lines.push(field("Error", error.clone(), Style::default().fg(RED)));
                 }
                 Status::Unknown => {}
             }
 
             if !t.metadata.is_empty() {
                 lines.push(Line::from(""));
-                lines.push(Line::from("Labels:"));
-                for (k, v) in &t.metadata {
-                    lines.push(Line::from(format!("  {k}={v}")));
-                }
+                lines.push(Line::styled("Labels", Style::default().fg(LABEL)));
+                lines.extend(t.metadata.iter().map(|(k, v)| {
+                    Line::from(vec![
+                        Span::styled(format!("  {k}="), Style::default().fg(LABEL)),
+                        Span::styled(v.clone(), Style::default().fg(TEXT)),
+                    ])
+                }));
             }
 
             lines
@@ -160,47 +217,38 @@ pub fn render_detail(f: &mut Frame, area: Rect, target: Option<&Target>) {
     f.render_widget(paragraph, area);
 }
 
-pub fn render_websites_bar(f: &mut Frame, area: Rect, targets: &[Target]) {
-    let websites: Vec<&Target> = targets
-        .iter()
-        .filter(|t| t.kind == TargetKind::Website)
-        .collect();
-
-    let spans: Vec<Span> = websites
-        .iter()
-        .flat_map(|t| {
-            let (icon, color) = status_icon(&t.status);
-            vec![
-                Span::styled(format!("{icon} "), Style::default().fg(color)),
-                Span::raw(format!("{}  ", t.name)),
-            ]
-        })
-        .collect();
-
-    let block = Block::default()
-        .title("Websites")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(48, 54, 61)));
-    let para = Paragraph::new(Line::from(spans)).block(block);
-    f.render_widget(para, area);
+fn field(label: &str, value: String, value_style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<9}"), Style::default().fg(LABEL)),
+        Span::styled(value, value_style),
+    ])
 }
 
-pub fn three_column_left(area: Rect) -> [Rect; 3] {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Ratio(1, 3),
-            Constraint::Ratio(1, 3),
-            Constraint::Ratio(1, 3),
-        ])
-        .split(area);
-    [chunks[0], chunks[1], chunks[2]]
+/// Inventory pane areas in pane order (Models, Agents, Tools, Websites): a single row of four
+/// equal columns on wide terminals, a 2×2 grid otherwise so names are not truncated.
+pub fn inventory_layout(area: Rect) -> [Rect; 4] {
+    if area.width >= WIDE_LAYOUT_MIN_WIDTH {
+        Layout::horizontal([Constraint::Fill(1); 4]).areas(area)
+    } else {
+        let [top, bottom] = Layout::vertical([Constraint::Fill(1); 2]).areas(area);
+        let [a, b] = Layout::horizontal([Constraint::Fill(1); 2]).areas(top);
+        let [c, d] = Layout::horizontal([Constraint::Fill(1); 2]).areas(bottom);
+        [a, b, c, d]
+    }
 }
 
 fn status_icon(status: &Status) -> (&'static str, Color) {
     match status {
-        Status::Ok { .. } => ("✓", Color::Rgb(63, 185, 80)), // GitHub green #3fb950
-        Status::Failed { .. } => ("✗", Color::Rgb(248, 81, 73)), // GitHub red #f85149
-        Status::Unknown => ("?", Color::Rgb(139, 148, 158)), // GitHub muted #8b949e
+        Status::Ok { .. } => ("✓", GREEN),
+        Status::Failed { .. } => ("✗", RED),
+        Status::Unknown => ("?", SUBTLE),
+    }
+}
+
+fn status_label(status: &Status) -> &'static str {
+    match status {
+        Status::Ok { .. } => "reachable",
+        Status::Failed { .. } => "failed",
+        Status::Unknown => "not yet probed",
     }
 }

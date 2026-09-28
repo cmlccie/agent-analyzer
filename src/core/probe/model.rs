@@ -4,7 +4,7 @@
 //! plain HTTP GET on the target URL so the skeleton compiles without a
 //! fully wired OpenAI client.
 
-use crate::core::probe::{Prober, failed_status};
+use crate::core::probe::{Prober, failed_status, request_failed};
 use crate::core::target::{Status, Target};
 use chrono::Utc;
 use reqwest::Client;
@@ -34,7 +34,7 @@ impl Prober for ModelProber {
                 }
             }
             Ok(resp) => failed_status(format!("HTTP {}", resp.status())),
-            Err(e) => failed_status(e),
+            Err(e) => request_failed(e),
         }
     }
 }

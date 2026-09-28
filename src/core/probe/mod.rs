@@ -31,9 +31,7 @@ pub async fn run_once(state: &AppState, timeout: Duration) -> anyhow::Result<()>
         let http = Arc::clone(&http);
         handles.push(tokio::spawn(async move {
             let status = probe_target(&http, &target).await;
-            let mut updated = target.clone();
-            updated.status = status;
-            state.upsert(updated);
+            state.set_status(&target.id, status);
         }));
     }
 
@@ -52,7 +50,6 @@ pub fn spawn_scheduler(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = interval(interval_duration);
-        ticker.tick().await; // skip the immediate first tick
         loop {
             ticker.tick().await;
             if let Err(e) = run_once(&state, http_timeout).await {
@@ -82,6 +79,29 @@ pub fn failed_status(error: impl std::fmt::Display) -> Status {
     }
 }
 
+/// Failed status for a transport error, naming the root cause.
+///
+/// reqwest's top-level message is just "error sending request for url (...)", which reads the
+/// same whether a network policy dropped the packets (timeout), rejected them (connection
+/// refused/reset) or DNS failed. The cause is further down the source chain, so the chain is
+/// flattened here; the URL is omitted because the detail view already shows it.
+pub fn request_failed(error: reqwest::Error) -> Status {
+    let error = error.without_url();
+    let mut parts = vec![error.to_string()];
+    let mut source = std::error::Error::source(&error);
+    while let Some(e) = source {
+        let msg = e.to_string();
+        if !parts.iter().any(|p| p.contains(&msg)) {
+            parts.push(msg);
+        }
+        source = e.source();
+    }
+    if error.is_timeout() && !parts.iter().any(|p| p.contains("timed out")) {
+        parts.push("timed out".into());
+    }
+    failed_status(parts.join(": "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +113,17 @@ mod tests {
         if let Status::Failed { error, .. } = s {
             assert!(error.contains("timeout"));
         }
+    }
+
+    #[tokio::test]
+    async fn request_failed_names_root_cause() {
+        let http = reqwest::Client::new();
+        let err = http.get("http://127.0.0.1:1/").send().await.unwrap_err();
+        let Status::Failed { error, .. } = request_failed(err) else {
+            panic!("expected failed status");
+        };
+        assert!(error.to_lowercase().contains("refused"), "got: {error}");
+        assert!(!error.contains("127.0.0.1"), "got: {error}");
     }
 
     #[tokio::test]

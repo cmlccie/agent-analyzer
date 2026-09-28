@@ -10,7 +10,7 @@ A Kubernetes-native terminal UI for discovering and probing AI components — mo
 - **Probes** each target on a configurable interval using the appropriate protocol: OpenAI-compatible API, MCP JSON-RPC handshake, Agent-to-Agent (A2A), or plain HTTP
 - **Exposes** current state over a local HTTP API
 
-A TUI client polls the backend and displays live, color-coded status across three panes (Models / Agents / Tools).
+A TUI client polls the backend and displays live, color-coded status across four inventory panes (Models / Agents / Tools / Websites), with a detail pane showing the selected target and its last probe error.
 
 ## Usage
 

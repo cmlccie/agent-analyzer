@@ -34,7 +34,7 @@ cargo run -- status --json   # JSON output
 
 **`src/cli/`** — User interfaces
 - `serve.rs` — Backend orchestration: loads config, spawns discovery scheduler, probe scheduler, serves HTTP API; supports hot-reload via file watcher (K8s ConfigMap symlink-swap compatible)
-- `tui/` — Ratatui + Crossterm TUI: polls backend, three panes (Models/Agents/Tools), color-coded status
+- `tui/` — Ratatui + Crossterm TUI: polls backend, four inventory panes (Models/Agents/Tools/Websites) over a detail pane, color-coded status
 - `status.rs` — One-shot CLI snapshot (text or JSON)
 - `args.rs` — Clap CLI parsing
 

@@ -81,7 +81,7 @@ impl Discoverer for KubernetesDiscoverer {
 
                 for svc in services {
                     if let Some(target) = service_to_target(&svc, *kind, base_path) {
-                        state.upsert(target);
+                        state.upsert_discovered(target);
                     }
                 }
             }

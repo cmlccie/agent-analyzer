@@ -3,7 +3,7 @@
 //! Implements a thin HTTP layer directly against the A2A spec (no external
 //! A2A library dependency; `fasa2a` does not exist on crates.io).
 
-use crate::core::probe::{Prober, failed_status};
+use crate::core::probe::{Prober, failed_status, request_failed};
 use crate::core::target::{Status, Target};
 use chrono::Utc;
 use reqwest::Client;
@@ -47,7 +47,7 @@ impl Prober for A2aProber {
                 Err(e) => failed_status(format!("invalid agent card: {e}")),
             },
             Ok(resp) => failed_status(format!("HTTP {}", resp.status())),
-            Err(e) => failed_status(e),
+            Err(e) => request_failed(e),
         }
     }
 }

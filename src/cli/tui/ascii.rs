@@ -9,8 +9,7 @@ pub const BANNER_LINES: &[&str] = &[
 
 /// Key-binding lines shown to the right of the logo in the header.
 pub const KEYS_LINES: &[&str] = &[
-    "  q      quit",
-    "  Tab    next pane",
-    "  ↑↓     select",
-    "  r      refresh",
+    "  Tab ←→   switch pane",
+    "  ↑↓ j k   select",
+    "  q        quit",
 ];

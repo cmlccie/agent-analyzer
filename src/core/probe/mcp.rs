@@ -3,7 +3,7 @@
 //! Uses `rmcp` (Rust MCP SDK). In this skeleton the prober does a lightweight
 //! HTTP probe on the MCP endpoint; the full rmcp integration is wired in step 6.
 
-use crate::core::probe::{Prober, failed_status};
+use crate::core::probe::{Prober, failed_status, request_failed};
 use crate::core::target::{Status, Target};
 use chrono::Utc;
 use reqwest::Client;
@@ -47,7 +47,7 @@ impl Prober for McpProber {
                 }
             }
             Ok(resp) => failed_status(format!("HTTP {}", resp.status())),
-            Err(e) => failed_status(e),
+            Err(e) => request_failed(e),
         }
     }
 }

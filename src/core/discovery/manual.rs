@@ -27,7 +27,7 @@ impl Discoverer for ManualDiscoverer {
             for entry in entries {
                 let id = format!("manual-{kind}-{}", entry.name);
                 let target = Target::new(id, kind, &entry.name, entry.url.clone(), Source::Manual);
-                state.upsert(target);
+                state.upsert_discovered(target);
             }
         }
         Ok(())

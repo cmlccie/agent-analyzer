@@ -12,8 +12,8 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    layout::{Constraint, Layout},
+    style::Style,
     text::Line,
     widgets::{Block, Borders, Paragraph},
 };
@@ -27,23 +27,22 @@ enum Pane {
     Models,
     Agents,
     Tools,
+    Websites,
 }
 
 impl Pane {
+    const ALL: [Pane; 4] = [Pane::Models, Pane::Agents, Pane::Tools, Pane::Websites];
+
+    fn index(self) -> usize {
+        self as usize
+    }
+
     fn next(self) -> Self {
-        match self {
-            Pane::Models => Pane::Agents,
-            Pane::Agents => Pane::Tools,
-            Pane::Tools => Pane::Models,
-        }
+        Self::ALL[(self.index() + 1) % Self::ALL.len()]
     }
 
     fn prev(self) -> Self {
-        match self {
-            Pane::Models => Pane::Tools,
-            Pane::Agents => Pane::Models,
-            Pane::Tools => Pane::Agents,
-        }
+        Self::ALL[(self.index() + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 }
 
@@ -89,23 +88,20 @@ where
         });
     }
 
-    let mut models_pane = ListPane::new("Models", TargetKind::Model);
-    let mut agents_pane = ListPane::new("Agents", TargetKind::Agent);
-    let mut tools_pane = ListPane::new("Tools (MCP)", TargetKind::Tool);
+    // Indexed by `Pane`.
+    let mut panes = [
+        ListPane::new("Models", TargetKind::Model),
+        ListPane::new("Agents", TargetKind::Agent),
+        ListPane::new("Tools (MCP)", TargetKind::Tool),
+        ListPane::new("Websites", TargetKind::Website),
+    ];
     let mut focused = Pane::Models;
 
     loop {
         let ts = targets.lock().unwrap().clone();
 
         terminal.draw(|f| {
-            draw(
-                f,
-                &ts,
-                &mut models_pane,
-                &mut agents_pane,
-                &mut tools_pane,
-                focused,
-            );
+            draw(f, &ts, &mut panes, focused);
         })?;
 
         if event::poll(Duration::from_millis(200))?
@@ -117,16 +113,10 @@ where
                 }
                 (KeyCode::Tab, _) => focused = focused.next(),
                 (KeyCode::BackTab, _) => focused = focused.prev(),
-                (KeyCode::Down, _) => match focused {
-                    Pane::Models => models_pane.select_next(&ts),
-                    Pane::Agents => agents_pane.select_next(&ts),
-                    Pane::Tools => tools_pane.select_next(&ts),
-                },
-                (KeyCode::Up, _) => match focused {
-                    Pane::Models => models_pane.select_prev(&ts),
-                    Pane::Agents => agents_pane.select_prev(&ts),
-                    Pane::Tools => tools_pane.select_prev(&ts),
-                },
+                (KeyCode::Right, _) => focused = focused.next(),
+                (KeyCode::Left, _) => focused = focused.prev(),
+                (KeyCode::Down | KeyCode::Char('j'), _) => panes[focused.index()].select_next(&ts),
+                (KeyCode::Up | KeyCode::Char('k'), _) => panes[focused.index()].select_prev(&ts),
                 _ => {}
             }
         }
@@ -135,73 +125,50 @@ where
     Ok(())
 }
 
-fn draw(
-    f: &mut Frame,
-    targets: &[Target],
-    models_pane: &mut ListPane,
-    agents_pane: &mut ListPane,
-    tools_pane: &mut ListPane,
-    focused: Pane,
-) {
-    let size = f.area();
-
-    // Outer split: header | body | websites bar
-    let outer = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(7), // 6 banner lines + bottom border
-            Constraint::Min(0),    // main body
-            Constraint::Length(3), // websites bar
-        ])
-        .split(size);
+fn draw(f: &mut Frame, targets: &[Target], panes: &mut [ListPane; 4], focused: Pane) {
+    // Header | inventory | detail. The inventory and detail split the body 8:5 (consecutive
+    // Fibonacci numbers, ≈ the golden ratio) so the inventory panes carry the most weight.
+    let [header, inventory, detail] = Layout::vertical([
+        Constraint::Length(7), // 6 banner lines + bottom border
+        Constraint::Fill(8),
+        Constraint::Fill(5),
+    ])
+    .areas(f.area());
 
     // Header: logo left, key bindings right, shared bottom border.
     // Render the border on the full area first, then work inside the inner rect.
     let header_block = Block::default()
         .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(Color::Rgb(48, 54, 61)));
-    let header_inner = header_block.inner(outer[0]);
-    f.render_widget(header_block, outer[0]);
+        .border_style(Style::default().fg(widgets::BORDER));
+    let header_inner = header_block.inner(header);
+    f.render_widget(header_block, header);
 
-    let header_cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(22)])
-        .split(header_inner);
+    let [logo_area, keys_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(24)]).areas(header_inner);
 
-    let logo: Vec<Line> = ascii::BANNER_LINES.iter().map(|&l| Line::from(l)).collect();
-    f.render_widget(Paragraph::new(logo), header_cols[0]);
+    let logo: Vec<Line> = ascii::BANNER_LINES
+        .iter()
+        .map(|&l| Line::styled(l, Style::default().fg(widgets::TEXT)))
+        .collect();
+    f.render_widget(Paragraph::new(logo), logo_area);
 
     // Offset keys by 1 blank line so they sit in the middle of the banner height.
-    let key_style = Style::default().fg(Color::Rgb(139, 148, 158)); // GitHub muted #8b949e
     let keys: Vec<Line> = std::iter::once(Line::from(""))
         .chain(
             ascii::KEYS_LINES
                 .iter()
-                .map(|&l| Line::from(ratatui::text::Span::styled(l, key_style))),
+                .map(|&l| Line::styled(l, Style::default().fg(widgets::LABEL))),
         )
         .collect();
-    f.render_widget(Paragraph::new(keys), header_cols[1]);
+    f.render_widget(Paragraph::new(keys), keys_area);
 
-    // Body split: left panes | detail pane
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(28), Constraint::Min(0)])
-        .split(outer[1]);
+    for ((pane, area), p) in panes
+        .iter_mut()
+        .zip(widgets::inventory_layout(inventory))
+        .zip(Pane::ALL)
+    {
+        pane.render(f, area, targets, p == focused);
+    }
 
-    // Left column: three stacked list panes
-    let left_panes = widgets::three_column_left(body[0]);
-    models_pane.render(f, left_panes[0], targets, focused == Pane::Models);
-    agents_pane.render(f, left_panes[1], targets, focused == Pane::Agents);
-    tools_pane.render(f, left_panes[2], targets, focused == Pane::Tools);
-
-    // Detail pane
-    let selected = match focused {
-        Pane::Models => models_pane.selected_target(targets),
-        Pane::Agents => agents_pane.selected_target(targets),
-        Pane::Tools => tools_pane.selected_target(targets),
-    };
-    widgets::render_detail(f, body[1], selected);
-
-    // Websites bar
-    widgets::render_websites_bar(f, outer[2], targets);
+    widgets::render_detail(f, detail, panes[focused.index()].selected_target(targets));
 }
