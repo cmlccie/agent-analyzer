@@ -1,5 +1,5 @@
 use crate::core::state::AppState;
-use crate::core::target::{Source, Status, Target, TargetKind};
+use crate::core::target::{FailureKind, Source, Status, Target, TargetKind};
 use chrono::Utc;
 use serde_json::json;
 
@@ -41,15 +41,16 @@ pub fn populate(state: &AppState, fail_keys: &[FailKey]) {
             .iter()
             .any(|k| k.kind == target.kind && k.name == target.name);
         if should_fail {
-            target.status = Status::Failed {
+            target.record(Status::Failed {
+                kind: FailureKind::Timeout,
                 error: "forced failure (--fail flag)".into(),
                 checked_at: Utc::now(),
-            };
+            });
         } else {
-            target.status = Status::Ok {
+            target.record(Status::Ok {
                 details: probe_details(&target),
                 checked_at: Utc::now(),
-            };
+            });
         }
         state.upsert(target);
     }
@@ -62,10 +63,13 @@ fn probe_details(target: &Target) -> serde_json::Value {
         }),
         TargetKind::Agent => json!({
             "name": target.name.clone(),
-            "version": "1.0"
+            "version": "1.0",
+            "skills": ["plan", "delegate"]
         }),
         TargetKind::Tool => json!({
-            "tools": [{"name": "read_file"}, {"name": "write_file"}]
+            "server": format!("{} 1.0.0", target.name),
+            "protocol": "2025-06-18",
+            "tools": ["read_file", "write_file"]
         }),
         TargetKind::Website => json!({
             "status_code": 200

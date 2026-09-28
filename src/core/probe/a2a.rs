@@ -3,8 +3,8 @@
 //! Implements a thin HTTP layer directly against the A2A spec (no external
 //! A2A library dependency; `fasa2a` does not exist on crates.io).
 
-use crate::core::probe::{Prober, failed_status};
-use crate::core::target::{Status, Target};
+use crate::core::probe::{Prober, failed_status, http_failed, request_failed};
+use crate::core::target::{FailureKind, Status, Target};
 use chrono::Utc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,31 @@ pub struct AgentCard {
     pub version: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<AgentSkill>,
+}
+
+/// A capability an agent advertises in its card.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSkill {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+impl AgentCard {
+    /// Summary for the detail view: identity plus the names of advertised skills.
+    fn details(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": self.name,
+            "description": self.description,
+            "version": self.version,
+            "url": self.url,
+            "skills": self.skills.iter().map(|s| &s.name).collect::<Vec<_>>(),
+        })
+    }
 }
 
 pub struct A2aProber {
@@ -37,17 +62,14 @@ impl Prober for A2aProber {
 
         match self.http.get(&card_url).send().await {
             Ok(resp) if resp.status().is_success() => match resp.json::<AgentCard>().await {
-                Ok(card) => {
-                    let details = serde_json::to_value(&card).unwrap_or(serde_json::Value::Null);
-                    Status::Ok {
-                        details,
-                        checked_at: Utc::now(),
-                    }
-                }
-                Err(e) => failed_status(format!("invalid agent card: {e}")),
+                Ok(card) => Status::Ok {
+                    details: card.details(),
+                    checked_at: Utc::now(),
+                },
+                Err(e) => failed_status(FailureKind::Protocol, format!("invalid agent card: {e}")),
             },
-            Ok(resp) => failed_status(format!("HTTP {}", resp.status())),
-            Err(e) => failed_status(e),
+            Ok(resp) => http_failed(resp.status()),
+            Err(e) => request_failed(e),
         }
     }
 }
@@ -99,6 +121,17 @@ mod tests {
         let json = r#"{"name":"planner","description":"planning agent","version":"1.0"}"#;
         let card: AgentCard = serde_json::from_str(json).unwrap();
         assert_eq!(card.name, "planner");
+        assert!(card.skills.is_empty());
+    }
+
+    #[test]
+    fn agent_card_details_list_skill_names() {
+        let json = r#"{"name":"weather","skills":[{"id":"fc","name":"forecast","tags":[]},{"name":"alerts"}]}"#;
+        let card: AgentCard = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            card.details()["skills"],
+            serde_json::json!(["forecast", "alerts"])
+        );
     }
 
     #[tokio::test]

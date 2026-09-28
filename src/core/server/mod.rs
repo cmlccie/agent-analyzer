@@ -3,12 +3,16 @@ pub mod routes;
 
 use crate::core::state::AppState;
 use anyhow::Context;
-use axum::{Router, routing::get};
+use axum::{
+    Router,
+    routing::{get, post},
+};
 use std::net::SocketAddr;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/healthz", get(routes::healthz))
+        .route("/api/v1/refresh", post(routes::refresh))
         .route("/api/v1/state", get(routes::get_state))
         .route("/api/v1/targets", get(routes::get_targets))
         .route("/api/v1/targets/{id}", get(routes::get_target))
@@ -41,6 +45,8 @@ mod tests {
             source: Source::Manual,
             status: Status::Unknown,
             metadata: Default::default(),
+            since: None,
+            history: Vec::new(),
         }
     }
 
@@ -69,5 +75,18 @@ mod tests {
         let server = TestServer::new(router(state));
         let resp = server.get("/api/v1/targets/nonexistent").await;
         resp.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn refresh_signals_background_loop() {
+        let state = AppState::new();
+        let server = TestServer::new(router(state.clone()));
+        server
+            .post("/api/v1/refresh")
+            .await
+            .assert_status(StatusCode::ACCEPTED);
+        tokio::time::timeout(std::time::Duration::from_secs(1), state.refresh_requested())
+            .await
+            .expect("refresh request should reach the background loop");
     }
 }

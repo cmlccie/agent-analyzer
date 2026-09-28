@@ -38,16 +38,28 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
 
             // Background discovery scheduler — reads the live config Arc each tick
             // so label-selector and namespace changes take effect without a restart.
+            // A refresh request (`POST /api/v1/refresh`, `r` in the TUI) runs discovery
+            // immediately and follows it with a probe pass, so the effect of a policy change
+            // shows up without waiting for either interval.
             let discovery_state = state.clone();
             let discovery_cfg = Arc::clone(&cfg);
             tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(discovery_interval);
                 ticker.tick().await;
                 loop {
-                    ticker.tick().await;
+                    let requested = tokio::select! {
+                        _ = ticker.tick() => false,
+                        _ = discovery_state.refresh_requested() => true,
+                    };
                     let snapshot = discovery_cfg.read().expect("config lock poisoned").clone();
                     if let Err(e) = discovery::run_once(&snapshot, &discovery_state).await {
                         tracing::warn!("discovery failed: {e}");
+                    }
+                    if requested {
+                        let timeout = snapshot.general.http_timeout();
+                        if let Err(e) = probe::run_once(&discovery_state, timeout).await {
+                            tracing::warn!("probe pass failed: {e}");
+                        }
                     }
                 }
             });
